@@ -1,0 +1,571 @@
+---
+title: "metrics 2 paper"
+author: "Murphy Li"
+date: "2023-12-14"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library(pacman)
+p_load(tidyverse, lfe, stargazer, lubridate, lmtest)
+
+```
+
+load data
+```{r}
+df<-read.csv('data.csv')%>%
+  select(-c('Series.Code'))%>%
+  rename(variable=Series.Name,
+         country=Country.Name,
+         code=Country.Code)
+
+
+
+names(df)<-gsub("\\..*","",names(df))
+names(df)<-gsub("X","",names(df))
+```
+
+pivot longer to change years to rows
+```{r}
+df<-df%>%
+  pivot_longer(!c('variable', 'country', 'code'), names_to='year', values_to='value')
+
+
+
+#make year and values numeric
+df$year<-as.numeric(df$year)
+df$value<-as.numeric(df$value)
+#df$value[df$value=='']<-NA
+
+
+
+
+```
+
+pivot wider to change variable column to columns
+```{r}
+df<-df%>%
+  distinct%>%
+  pivot_wider(names_from=variable, values_from=value)
+```
+
+simplify column names
+```{r}
+
+names(df)[4]<-'gdpgr'
+names(df)[5]<-'gdppercap'
+names(df)[6]<-'urate'
+names(df)[7]<-'exrate'
+names(df)[8]<-'tarrate'
+names(df)[9]<-'hightechexpr'
+names(df)[10]<-'healthexp'
+names(df)[11]<-'pop'
+names(df)[12]<-'labpartr'
+
+df <- df %>% mutate(pop_sq = pop^2)
+```
+
+ [1] "country"                                                                                        
+ [2] "code"                                                                                           
+ [3] "year"                                                                                           
+ [4] "GDP growth (annual %)"                                                                          
+ [5] "GDP per capita (current US$)"                                                                   
+ [6] "Unemployment, total (% of total labor force) (national estimate)"                               
+ [7] "Real effective exchange rate index (2010 = 100)"                                                
+ [8] "Tariff rate, applied, simple mean, all products (%)"                                            
+ [9] "High-technology exports (% of manufactured exports)"                                            
+[10] "Current health expenditure (% of GDP)"                                                          
+[11] "Population ages 15-64 (% of total population)"                                                  
+[12] "Labor force participation rate, total (% of total population ages 15-64) (modeled ILO estimate)"
+
+
+dummy for covid
+```{r}
+df$covid<-0
+df$covid[df$year==2020]<-1
+```
+
+
+
+
+make factor variable for identifying low, low mid, up mid, high income countries 
+```{r}
+df$income <- ifelse(df$gdppercap > 12696, "High",
+                         ifelse(df$gdppercap > 4096, "Upper mid",
+                                ifelse(df$gdppercap > 1045, "Lower mid", "Low")))
+df$income<-as.factor(df$income)
+
+
+```
+Low-income countries: GNI per capita of $1,045 or less.
+Lower-middle-income countries: GNI per capita between $1,046 and $4,095.
+Upper-middle-income countries: GNI per capita between $4,096 and $12,695.
+High-income countries: GNI per capita of $12,696 or more.
+
+summary statistics
+```{r}
+#mean table
+mean_sum_stat <- df %>%
+  group_by(income) %>%
+  summarize(
+    gdp_gr = round(mean(gdpgr, na.rm = TRUE), 1),
+    gdp_per_cap = round(mean(gdppercap, na.rm = TRUE), 1),
+    urate = round(mean(urate, na.rm = TRUE), 1),
+    exrate = round(mean(exrate, na.rm = TRUE), 1),
+    tar_rate = round(mean(tarrate, na.rm = TRUE), 1),
+    HT_export = round(mean(hightechexpr, na.rm = TRUE), 1),
+    health_exp = round(mean(healthexp, na.rm = TRUE), 1),
+    pop = round(mean(pop, na.rm = TRUE), 1),
+    labpart_r = round(mean(labpartr, na.rm = TRUE), 1)
+  )
+mean_sum_stat$income<-as.character(mean_sum_stat$income)
+
+mean_sum_stat<-mean_sum_stat[-5,]
+
+stargazer(mean_sum_stat, summary=F)
+```
+
+
+eda and graphs
+```{r}
+#all country
+
+
+df%>%
+  ggplot(aes(x=year, y=gdpgr, color=country))+
+  geom_line()+
+  theme_bw()+
+  geom_vline(xintercept=2020)+
+  theme(legend.position = "none")+
+  labs(title='Real GDP Growth Rate of all 217 countries')+
+  ylab('Real GDP Growth Rate (%)')+
+  xlab('Year')
+
+#average by income level
+df%>%
+  select(c('year', 'gdpgr', 'income'))%>%
+  na.omit()%>%
+  group_by(year, income)%>%
+  summarize(gdpgr=mean(gdpgr))%>%
+  ggplot(aes(x=year, y=gdpgr, color=income))+
+  geom_line()+
+  theme_bw()+
+  geom_vline(xintercept=2020)+
+  labs(title='Average Real GDP Growth Rate of Countries by Income level')+
+  ylab('Real GDP Growth Rate (%)')+
+  xlab('Year')
+
+#only high
+df%>%
+  select(c('year', 'gdpgr', 'income'))%>%
+  filter(income=='High')%>%
+  na.omit()%>%
+  group_by(year, income)%>%
+  summarize(gdpgr=mean(gdpgr))%>%
+  ggplot(aes(x=year, y=gdpgr, color=income))+
+  geom_line()+
+  theme_bw()+
+  geom_vline(xintercept=2020)+
+  theme(legend.position = "none")+
+  labs(title='Average Real GDP Growth Rate of High Income Countries')+
+  ylab('Real GDP Growth Rate (%)')+
+  xlab('Year')
+
+#only low
+df%>%
+  select(c('year', 'gdpgr', 'income'))%>%
+  filter(income=='Low')%>%
+  na.omit()%>%
+  group_by(year, income)%>%
+  summarize(gdpgr=mean(gdpgr))%>%
+  ggplot(aes(x=year, y=gdpgr, color=income))+
+  geom_line()+
+  theme_bw()+
+  geom_vline(xintercept=2020)+
+  theme(legend.position = "none")+
+  labs(title='Average Real GDP Growth Rate of Low Income Countries')+
+  ylab('Real GDP Growth Rate (%)')+
+  xlab('Year')
+
+#only lower mid
+df%>%
+  select(c('year', 'gdpgr', 'income'))%>%
+  filter(income=='Lower mid')%>%
+  na.omit()%>%
+  group_by(year, income)%>%
+  summarize(gdpgr=mean(gdpgr))%>%
+  ggplot(aes(x=year, y=gdpgr, color=income))+
+  geom_line()+
+  theme_bw()+
+  geom_vline(xintercept=2020)+
+  theme(legend.position = "none")+
+  labs(title='Average Real GDP Growth Rate of Lower Middle Income Countries')+
+  ylab('Real GDP Growth Rate (%)')+
+  xlab('Year')
+
+#only upper mid
+df%>%
+  select(c('year', 'gdpgr', 'income'))%>%
+  filter(income=='Upper mid')%>%
+  na.omit()%>%
+  group_by(year, income)%>%
+  summarize(gdpgr=mean(gdpgr))%>%
+  ggplot(aes(x=year, y=gdpgr, color=income))+
+  geom_line()+
+  theme_bw()+
+  geom_vline(xintercept=2020)+
+  theme(legend.position = "none")+
+  labs(title='Average Real GDP Growth Rate of Upper Middle Income Countries')+
+  ylab('Real GDP Growth Rate (%)')+
+  xlab('Year')
+
+#all countries in upper mid
+df%>%
+  select(c('year', 'gdpgr', 'income', 'country'))%>%
+  filter(income=='Upper mid')%>%
+  na.omit()%>%
+  ggplot(aes(x=year, y=gdpgr, color=country))+
+  geom_line()+
+  theme_bw()+
+  geom_vline(xintercept=2020)+
+  theme(legend.position = "none")+
+  labs(title='Real GDP Growth Rate of Upper Middle Income Countries')+
+  ylab('Real GDP Growth Rate (%)')+
+  xlab('Year')
+
+#all countries in lower mid
+df%>%
+  select(c('year', 'gdpgr', 'income', 'country'))%>%
+  filter(income=='Lower mid')%>%
+  na.omit()%>%
+  ggplot(aes(x=year, y=gdpgr, color=country))+
+  geom_line()+
+  theme_bw()+
+  geom_vline(xintercept=2020)+
+  theme(legend.position = "none")+
+  labs(title='Real GDP Growth Rate of Lower Middle Income Countries')+
+  ylab('Real GDP Growth Rate (%)')+
+  xlab('Year')
+
+#all countries in high
+df%>%
+  select(c('year', 'gdpgr', 'income', 'country'))%>%
+  filter(income=='High')%>%
+  na.omit()%>%
+  ggplot(aes(x=year, y=gdpgr, color=country))+
+  geom_line()+
+  theme_bw()+
+  geom_vline(xintercept=2020)+
+  theme(legend.position = "none")+
+  labs(title='Real GDP Growth Rate of High Income Countries')+
+  ylab('Real GDP Growth Rate (%)')+
+  xlab('Year')
+
+#all countries in low
+  select(c('year', 'gdpgr', 'income', 'country'))%>%
+  filter(income=='Low')%>%
+  na.omit()%>%
+  ggplot(aes(x=year, y=gdpgr, color=country))+
+  geom_line()+
+  theme_bw()+
+  geom_vline(xintercept=2020)+
+  theme(legend.position = "none")+
+  labs(title='Real GDP Growth Rate of Low Income Countries')+
+  ylab('Real GDP Growth Rate (%)')+
+  xlab('Year')
+```
+
+model 1 with all variables
+```{r}
+#looking at all countries
+mod1<-felm(gdpgr~urate + exrate + tarrate + hightechexpr + healthexp + pop+ pop_sq+ labpartr +  covid|country |0|country, df )
+mod2<-felm(gdpgr~urate + tarrate + hightechexpr + healthexp +  labpartr + covid|country|0|country, df )
+mod3<-felm(gdpgr~urate + exrate +  hightechexpr + healthexp + pop +  covid |country |0|country, df )
+mod4<-felm(gdpgr~urate  +  hightechexpr + healthexp + pop +  covid |country |0|country, df )
+
+#incorporating their wealth (looking at gdp per cap)
+mod5<-felm(gdpgr~urate + exrate + tarrate + hightechexpr + healthexp + pop+ pop_sq+ labpartr +  covid *income|country |0|country, df )
+mod6<-felm(gdpgr~urate + tarrate + hightechexpr + healthexp +  labpartr + covid*income|country|0|country, df )
+mod7<-felm(gdpgr~urate + exrate +  hightechexpr + healthexp + pop +  covid *income|country |0|country, df )
+mod8<-felm(gdpgr~urate  +  hightechexpr + healthexp + pop +  covid * income|country|0|country, df )
+
+
+summary(mod1, robust=T)
+AIC(mod1)
+summary(mod2, robust=T)
+AIC(mod2)
+summary(mod3, robust=T)
+AIC(mod3)
+summary(mod4, robust=T)
+AIC(mod4)
+summary(mod5, robust=T)
+AIC(mod5)
+summary(mod6, robust=T)
+AIC(mod6)
+summary(mod7, robust=T)
+AIC(mod7)
+summary(mod8, robust=T)
+AIC(mod8)
+
+#unrestricted model
+stargazer(mod1, mod5)
+
+#restricted model with no interactive term
+stargazer(mod2, mod3, mod4)
+
+#restricted model with interactive term
+stargazer(mod6, mod7, mod8)
+
+summary(mod1, robust=T)
+AIC(mod1)
+summary(mod5, robust=T)
+AIC(mod5)
+
+
+
+
+
+```
+model 6 is best
+
+
+Eigen values for cor matrix for models to check for multicolinearity (small is yes multicolinearity)
+```{r}
+eigen(cor(model.matrix(mod1)))$values
+eigen(cor(model.matrix(mod2)))$values
+eigen(cor(model.matrix(mod3)))$values
+eigen(cor(model.matrix(mod4)))$values
+eigen(cor(model.matrix(mod5)))$values
+eigen(cor(model.matrix(mod6)))$values
+eigen(cor(model.matrix(mod7)))$values
+eigen(cor(model.matrix(mod8)))$values
+```
+models 1, 5, 7?,8  may suffer from multicolinearity, cannot run VIF test since model has no intercept
+
+residual plots for the 4 models
+```{r}
+#MOD 1
+# Extract residuals and fitted values
+residuals <- resid(mod1)
+fitted_values <- fitted(mod1)
+
+# Create a data frame for ggplot
+plot_data <- data.frame(Fitted = fitted_values, Residuals = residuals)
+
+# Create a residual plot
+ggplot(plot_data, aes(x = gdpgr, y = gdpgr.1)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Base model with no interactive term", x = "Fitted Values", y = "Residuals") +
+  theme_minimal()
+
+#MOD 2
+# Extract residuals and fitted values
+residuals <- resid(mod2)
+fitted_values <- fitted(mod2)
+
+# Create a data frame for ggplot
+plot_data <- data.frame(Fitted = fitted_values, Residuals = residuals)
+
+# Create a residual plot
+ggplot(plot_data, aes(x = gdpgr, y = gdpgr.1)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Residual restricted model 1 with no interactive term", x = "Fitted Values", y = "Residuals") +
+  theme_minimal()
+
+#MOD 3
+# Extract residuals and fitted values
+residuals <- resid(mod3)
+fitted_values <- fitted(mod3)
+
+# Create a data frame for ggplot
+plot_data <- data.frame(Fitted = fitted_values, Residuals = residuals)
+
+# Create a residual plot
+ggplot(plot_data, aes(x = gdpgr, y = gdpgr.1)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Restricted model 2 with no interactive term", x = "Fitted Values", y = "Residuals") +
+  theme_minimal()
+
+#MOD 4
+# Extract residuals and fitted values
+residuals <- resid(mod4)
+fitted_values <- fitted(mod4)
+
+# Create a data frame for ggplot
+plot_data <- data.frame(Fitted = fitted_values, Residuals = residuals)
+
+# Create a residual plot
+ggplot(plot_data, aes(x = gdpgr, y = gdpgr.1)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Restricted model 3 with no interactive term", x = "Fitted Values", y = "Residuals") +
+  theme_minimal()
+
+#MOD 5
+# Extract residuals and fitted values
+residuals <- resid(mod5)
+fitted_values <- fitted(mod5)
+
+# Create a data frame for ggplot
+plot_data <- data.frame(Fitted = fitted_values, Residuals = residuals)
+
+# Create a residual plot
+ggplot(plot_data, aes(x = gdpgr, y = gdpgr.1)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Base model with interactive term", x = "Fitted Values", y = "Residuals") +
+  theme_minimal()
+
+#MOD 6
+# Extract residuals and fitted values
+residuals <- resid(mod6)
+fitted_values <- fitted(mod6)
+
+# Create a data frame for ggplot
+plot_data <- data.frame(Fitted = fitted_values, Residuals = residuals)
+
+# Create a residual plot
+ggplot(plot_data, aes(x = gdpgr, y = gdpgr.1)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Restricted model 1 with interactive term", x = "Fitted Values", y = "Residuals") +
+  theme_minimal()
+
+#MOD 7
+# Extract residuals and fitted values
+residuals <- resid(mod7)
+fitted_values <- fitted(mod7)
+
+# Create a data frame for ggplot
+plot_data <- data.frame(Fitted = fitted_values, Residuals = residuals)
+
+# Create a residual plot
+ggplot(plot_data, aes(x = gdpgr, y = gdpgr.1)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Restricted model 2 with interactive term", x = "Fitted Values", y = "Residuals") +
+  theme_minimal()
+
+#MOD 8
+# Extract residuals and fitted values
+residuals <- resid(mod8)
+fitted_values <- fitted(mod8)
+
+# Create a data frame for ggplot
+plot_data <- data.frame(Fitted = fitted_values, Residuals = residuals)
+
+# Create a residual plot
+ggplot(plot_data, aes(x = gdpgr, y = gdpgr.1)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Restricted model 3 with interactive term", x = "Fitted Values", y = "Residuals") +
+  theme_minimal()
+```
+# slight observable heteroskedasticity, not apparent. Use white test to check
+
+White and bp test for heteroskedasticity
+```{r}
+bptest(mod1)
+bptest(mod2)
+bptest(mod3)
+bptest(mod4)
+bptest(mod5)
+bptest(mod6)
+bptest(mod7)
+bptest(mod8)
+
+
+```
+BP test suggest all models are heteroskedastic except for model 6
+
+plot residuals to check distribution
+```{r}
+# mod 1
+residuals_mod1 <- residuals(mod1)
+
+ggplot(data.frame(residuals = residuals_mod1), aes(x = gdpgr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, color = "white", fill = "lightblue", alpha = 0.7) +
+  geom_density(color = "blue") +
+  labs(title = "Histogram with Bell Curve for Residuals Mod 1") +
+  theme_minimal()
+
+# mod 2
+residuals_mod2 <- residuals(mod2)
+
+ggplot(data.frame(residuals = residuals_mod2), aes(x = gdpgr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, color = "white", fill = "lightblue", alpha = 0.7) +
+  geom_density(color = "blue") +
+  labs(title = "Histogram with Bell Curve for Residuals Mod 2") +
+  theme_minimal()
+
+# mod 3
+residuals_mod3 <- residuals(mod3)
+
+ggplot(data.frame(residuals = residuals_mod3), aes(x = gdpgr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, color = "white", fill = "lightblue", alpha = 0.7) +
+  geom_density(color = "blue") +
+  labs(title = "Histogram with Bell Curve for Residuals Mod 3") +
+  theme_minimal()
+
+# mod 4
+residuals_mod4 <- residuals(mod4)
+
+ggplot(data.frame(residuals = residuals_mod4), aes(x = gdpgr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, color = "white", fill = "lightblue", alpha = 0.7) +
+  geom_density(color = "blue") +
+  labs(title = "Histogram with Bell Curve for Residuals Mod 4") +
+  theme_minimal()
+
+# mod 5
+residuals_mod5 <- residuals(mod5)
+
+ggplot(data.frame(residuals = residuals_mod5), aes(x = gdpgr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, color = "white", fill = "lightblue", alpha = 0.7) +
+  geom_density(color = "blue") +
+  labs(title = "Histogram with Bell Curve for Residuals Mod 1") +
+  theme_minimal()
+
+# mod 6
+residuals_mod6 <- residuals(mod6)
+
+ggplot(data.frame(residuals = residuals_mod6), aes(x = gdpgr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, color = "white", fill = "lightblue", alpha = 0.7) +
+  geom_density(color = "blue") +
+  labs(title = "Histogram with Bell Curve for Residuals Mod 2") +
+  theme_minimal()
+
+# mod 3
+residuals_mod7 <- residuals(mod7)
+
+ggplot(data.frame(residuals = residuals_mod7), aes(x = gdpgr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, color = "white", fill = "lightblue", alpha = 0.7) +
+  geom_density(color = "blue") +
+  labs(title = "Histogram with Bell Curve for Residuals Mod 3") +
+  theme_minimal()
+
+# mod 4
+residuals_mod8 <- residuals(mod8)
+
+ggplot(data.frame(residuals = residuals_mod8), aes(x = gdpgr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, color = "white", fill = "lightblue", alpha = 0.7) +
+  geom_density(color = "blue") +
+  labs(title = "Histogram with Bell Curve for Residuals Mod 4") +
+  theme_minimal()
+```
+
+Normality test
+```{r}
+shapiro.test(mod1$residuals)
+shapiro.test(mod2$residuals)
+shapiro.test(mod3$residuals)
+shapiro.test(mod4$residuals)
+shapiro.test(mod5$residuals)
+shapiro.test(mod6$residuals)
+shapiro.test(mod7$residuals)
+shapiro.test(mod8$residuals)
+```
+residuals are not normal, there could be omitted variable bias
